@@ -13,18 +13,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Check plugin.json
+      - name: Check plugin.json exists
         run: |
           if [ ! -f ".claude-plugin/plugin.json" ]; then
             echo "Error: plugin.json not found"
             exit 1
           fi
-          echo "plugin.json exists"
-
-      - name: Validate JSON
-        run: |
-          npm install -g json
-          json verify .claude-plugin/plugin.json || true
+          echo "✓ plugin.json exists"
 
       - name: Check required files
         run: |
@@ -39,31 +34,61 @@ jobs:
             "skills/url-mode/SKILL.md"
             "skills/nurture-mode/SKILL.md"
             "README.md"
+            "LICENSE"
           )
+          missing=0
           for file in "${required_files[@]}"; do
             if [ ! -f "$file" ]; then
-              echo "Error: Required file $file not found"
-              exit 1
+              echo "✗ Missing: $file"
+              missing=$((missing + 1))
+            else
+              echo "✓ $file"
             fi
-            echo "✓ $file"
           done
+          if [ $missing -gt 0 ]; then
+            echo "Error: $missing required file(s) missing"
+            exit 1
+          fi
+
+      - name: Validate plugin.json syntax
+        run: |
+          if command -v python3 &> /dev/null; then
+            python3 -m json.tool .claude-plugin/plugin.json > /dev/null && echo "✓ plugin.json is valid JSON"
+          else
+            echo "Skipping JSON validation (python3 not available)"
+          fi
 
       - name: Check frontmatter in commands
         run: |
           for cmd in commands/*.md; do
             if ! grep -q "^description:" "$cmd"; then
-              echo "Error: $cmd missing description frontmatter"
+              echo "✗ $cmd missing description frontmatter"
               exit 1
             fi
-            echo "✓ $cmd has frontmatter"
+            echo "✓ $cmd has description"
           done
 
       - name: Check frontmatter in agents
         run: |
           for agent in agents/*.md; do
             if ! grep -q "^name:" "$agent" || ! grep -q "^description:" "$agent"; then
-              echo "Error: $agent missing required frontmatter"
+              echo "✗ $agent missing required frontmatter (name, description)"
               exit 1
             fi
-            echo "✓ $agent has frontmatter"
+            if ! grep -q "^tools:" "$agent"; then
+              echo "✗ $agent missing tools frontmatter"
+              exit 1
+            fi
+            echo "✓ $agent has required frontmatter"
           done
+
+      - name: Summary
+        run: |
+          echo "## Validation Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ plugin.json exists" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ All required files present" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Commands have frontmatter" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Agents have frontmatter" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Plugin validation passed! 🎉" >> $GITHUB_STEP_SUMMARY
