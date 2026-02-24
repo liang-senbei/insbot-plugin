@@ -1,0 +1,59 @@
+{
+  "currentProject": {
+    "brandName": "",
+    "website": "",
+    "igHandle": "",
+    "category": "",
+    "outputPath": "",
+    "phase": "idle",
+    "lastStep": ""
+  },
+  "brand": {
+    "oneLiner": "",
+    "vibe": "",
+    "vibeAnalogy": "",
+    "targetAudience": "",
+    "story": "",
+    "products": [],
+    "sellingPoints": [],
+    "brandContext": ""
+  },
+  "competitors": [],
+  "searchPools": {
+    "S1_competitors": [],
+    "S2_productTags": [],
+    "S3_sceneTags": [],
+    "S4_keywords": []
+  },
+  "strategyMatrix": {
+    "goals": [],
+    "styles": [],
+    "scenes": ["S1_竞品截流", "S2_产品标签", "S3_场景标签", "S4_关键词搜索"],
+    "replyRules": {
+      "urlStrategies": [],
+      "handleStrategies": []
+    },
+    "totalStrategies": 50,
+    "controlGroup": 4,
+    "repeatValidation": 10
+  },
+  "executionParams": {
+    "apiKey": "",
+    "model": "kimi-k2.5",
+    "dailyComments": {
+      "AB": 25,
+      "C": 20,
+      "D03": 100,
+      "D04": 10
+    },
+    "waitTime": {
+      "AB": { "min": 25, "max": 45 },
+      "C": { "min": 30, "max": 50 },
+      "D03": { "min": 8, "max": 15 },
+      "D04": { "min": 60, "max": 120 }
+    },
+    "replyWaitTime": { "min": 60, "max": 180 },
+    "exportPath": ""
+  },
+  "history": []
+}
