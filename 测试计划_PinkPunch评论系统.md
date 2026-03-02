@@ -1,381 +1,3 @@
-# PinkPunch Instagram 评论系统 — 独立隔离测试计划 v3
-
-> 品牌：PinkPunch（pinkpunch.com）| 官方 IG：@pinkpunch.official
-> 核心原则：**一个账号 = 一个策略 = 终身绑定，绝不交叉**
-> 执行方式：Claude Code + insbot-plugin
-> 状态：🔴 未开始 | 🟡 进行中 | 🟢 已完成 | ⚫ 废弃
-
----
-
-## ⚙️ 执行指引（Claude 自动执行专用）
-
-> **本章节是给 Claude Code 读的操作手册。** 当用户将本文档交给 Claude 并说「执行」时，Claude 应按以下规则自动操控 insbot-plugin 系统完成所有策略的评论任务。
-
-### 1. 文档解析规则
-
-- 本文档包含 **50 个策略**（A01-A12、B01-B12、C01-C12、D01-D04、E01-E10），每个策略下方有一个 `json` 代码块，即该策略的 **完整 API 配置**
-- **E 区策略**的 `prompt` 字段标注了 `【与 X 完全相同 — 见 X 配置】`，执行时必须从对应策略复制完整 prompt 文本（不能发送占位符）
-- 所有 `【待填】` 的 `serialNumber` 字段在运行时通过 AdsPower API 自动获取（见下方映射规则）
-- 所有 `【Kimi API Key】` 字段统一替换为：`sk-fGbJhN4bcFrRowc7uBx3iq4GniR4vM86NIOxwVVj0PwB3SqX`
-
-### 2. 执行前检查（必须全部通过才能开始）
-
-```bash
-# Step 1: 确认 insta_bot_ui 服务在线
-curl -s http://localhost:3000/api/health
-# 期望返回: {"status":"ok","isRunning":false}
-
-# Step 2: 获取 AdsPower 浏览器环境列表
-curl -s http://127.0.0.1:50325/api/v1/browser/list
-# 期望返回至少 50 个环境，每个含 serial_number 字段
-
-# Step 3: 建立策略→环境映射
-# 策略顺序（索引 0-49）：
-STRATEGY_ORDER = [
-  "A01","A02","A03","A04","A05","A06","A07","A08","A09","A10","A11","A12",
-  "B01","B02","B03","B04","B05","B06","B07","B08","B09","B10","B11","B12",
-  "C01","C02","C03","C04","C05","C06","C07","C08","C09","C10","C11","C12",
-  "D01","D02","D03","D04",
-  "E01","E02","E03","E04","E05","E06","E07","E08","E09","E10"
-]
-# A01 = 环境列表索引 0 的 serial_number
-# A02 = 环境列表索引 1 的 serial_number
-# ...以此类推
-# E10 = 环境列表索引 49 的 serial_number
-```
-
-### 3. 执行模式
-
-用户启动时指定模式（默认为「全量执行」）：
-
-| 模式 | 触发指令示例 | 说明 |
-|------|-------------|------|
-| **全量执行** | "执行全部" / "Phase 3 全量" | 按文档中的 maxComments 值跑全部 50 策略 |
-| **半量试跑** | "半量试跑" / "Phase 2" | A/B 区 maxComments=12, C 区=10, D03 跳过, D04=5, E 区跟随原策略 |
-| **养号模式** | "养号" / "Phase 1" | 使用 nurture 模式配置，仅浏览点赞不评论 |
-| **单策略执行** | "执行 A01" / "跑 C05" | 仅执行指定策略 |
-| **区域执行** | "执行 A 区" / "跑 B 区" | 按顺序执行该区域所有策略 |
-
-### 4. 核心执行循环
-
-```
-对每个策略 S（按 STRATEGY_ORDER 顺序）：
-
-  Step 1 — 构建配置
-    a) 从本文档中找到策略 S 的标题（如 ### A01），提取其下方的 json 代码块
-    b) 将 "serialNumber": "【待填】" 替换为 SERIAL_MAP[S]
-    c) 将 "apiKey": "【Kimi API Key】" 替换为实际 Key
-    d) 如果 prompt 包含 "【与 X 完全相同"：
-       → 找到策略 X 的 json 代码块，复制其 aiConfig.prompt 的完整文本
-       → 如果有 aiReplyPrompt 也包含同样占位符，同样复制
-
-  Step 2 — 启动任务
-    curl -X POST http://localhost:3000/api/start \
-      -H "Content-Type: application/json" \
-      -d '<构建好的完整 JSON>'
-    确认返回 {"success": true}
-
-  Step 3 — 轮询状态（每 30 秒一次）
-    LOOP:
-      response = curl -s http://localhost:3000/api/status
-      IF response.isCompleted == true:
-        记录: {策略ID, successCount, failCount, csvPath}
-        BREAK
-      IF response.error != null:
-        记录: {策略ID, error}
-        curl -X POST http://localhost:3000/api/stop
-        BREAK
-      SLEEP 30 秒
-
-  Step 4 — 输出状态行
-    成功: "✅ A01 | 成功 23/25 | 失败 2 | CSV: /path/export.csv"
-    失败: "❌ A01 | 错误: browser timeout | 已跳过"
-
-  Step 5 — 策略间冷却
-    SLEEP 10 秒，然后进入下一个策略
-```
-
-### 5. E 区 Prompt 解析表
-
-E 区策略的 prompt 和 aiReplyPrompt 是占位符，执行时必须从下表对应的源策略复制完整文本：
-
-| E 策略 | 复制自 | 需复制的字段 |
-|--------|--------|-------------|
-| E01 | A01 | `aiConfig.prompt` |
-| E02 | A08 | `aiConfig.prompt` |
-| E03 | B01 | `aiConfig.prompt` |
-| E04 | B08 | `aiConfig.prompt` |
-| E05 | C01 | `aiConfig.prompt` + `aiReplyPrompt` |
-| E06 | C02 | `aiConfig.prompt` + `aiReplyPrompt` |
-| E07 | A04 | `aiConfig.prompt` |
-| E08 | B04 | `aiConfig.prompt` |
-| E09 | C05 | `aiConfig.prompt` + `aiReplyPrompt` |
-| E10 | D03 | `aiConfig.prompt` |
-
-### 6. 错误处理与紧急停止
-
-**单策略失败：** 记录错误，跳过该策略，继续下一个。不重试（避免重复评论）。
-
-**连续 3 个策略失败：**
-1. 暂停执行
-2. `curl -s http://localhost:3000/api/health` 检查服务状态
-3. 如果服务正常 → 继续执行；如果服务异常 → 提示用户排查
-
-**紧急停止条件（引用本文档第八节）：**
-- 单日超过 3 个账号被限制 → 全部暂停，报告用户
-- 同一策略的原号 + E 区验证号同时被限制 → 暂停所有同类策略
-- D04（极保守策略）被限制 → 说明 IG 全局收紧风控，全部暂停
-
-**用户随时可说「停止」：** 立即执行 `curl -X POST http://localhost:3000/api/stop` 并终止循环。
-
-### 7. 执行报告
-
-**每个策略完成后输出一行：**
-```
-✅ A01 | 成功 23/25 | 失败 2 | CSV: /path/to/export.csv
-❌ A03 | 错误: browser timeout | 已跳过
-⏭️ D03 | 半量模式跳过
-```
-
-**每完成 10 个策略输出汇总：**
-```
---- 进度: 10/50 ---
-成功: 9 | 失败: 1 | 跳过: 0 | 总评论: 218 | 平均成功率: 96.8%
-```
-
-**全部完成后输出完整报告：**
-
-| 区域 | 策略数 | 成功 | 失败 | 跳过 | 总评论 | 成功率 |
-|------|--------|------|------|------|--------|--------|
-| A 区 | 12 | — | — | — | — | — |
-| B 区 | 12 | — | — | — | — | — |
-| C 区 | 12 | — | — | — | — | — |
-| D 区 | 4 | — | — | — | — | — |
-| E 区 | 10 | — | — | — | — | — |
-| **合计** | **50** | — | — | — | — | — |
-
----
-
-## 〇、品牌背景（所有 AI Prompt 共用的品牌知识）
-
-> 以下内容必须嵌入每个 AI Prompt 的开头，作为 AI 生成评论时的背景知识。
-
-```
-BRAND CONTEXT (use this knowledge naturally, never recite it):
-
-PinkPunch is a playful, Gen-Z-friendly intimate wellness brand. Founded after a frustrating 2018 Black Friday purchase — the founder felt existing adult toys were ugly, intimidating, and purely functional. PinkPunch launched in 2021 with the mission to make intimate products cute, fun, and approachable.
-
-Website: pinkpunch.com | Instagram: @pinkpunch.official
-Based in Hong Kong, ships worldwide, free shipping over $50.
-
-HERO PRODUCTS (mention by name when relevant):
-- Sunset Mushroom ($99) — the OG bestseller. App-controlled vibrating egg with a wireless AirPods-style charging case. Platinum food-grade silicone, 8 vibration modes, whisper-quiet (~50dB), 4.5hr battery. The charging capsule is iconic — looks like a cute gadget, not a sex toy.
-- Dream Bunny ($69.90) — mini suction vibrator with bunny-ear design. Dual stimulation (vibration + suction). Compact, beginner-friendly, comes in pastel green/pink/white.
-- Peachu ($99) — sucking vibrator, food-grade platinum silicone. Known for intense clitoral stimulation.
-- PEACARON ($69.90, on sale from $99.90) — 3D flexible vibrating dildo with boneless structure that molds to your body. IPX7 waterproof, 9 vibration modes, 4.5hr battery, under 50dB.
-
-SUB-BRAND: OROK — budget-friendly line ($29.99-$59.99) with rabbit vibrators, finger vibrators, vibrating panties, wand massagers.
-
-KEY SELLING POINTS you can casually reference:
-- App control for long-distance couples (partner can control from anywhere)
-- Cute, non-intimidating designs (pastel colors, mushroom/bunny/peach shapes)
-- Whisper-quiet motors (~50dB, quieter than a phone vibrating)
-- Premium platinum food-grade silicone (body-safe, soft, no smell)
-- Wireless/magnetic charging (the Sunset Mushroom case looks like AirPods)
-- IPX7 waterproof on most models (shower/bath friendly)
-- Discreet packaging (no one knows what's inside)
-
-BRAND VIBE: Think "if Glossier made vibrators." Cute, pastel, unapologetic, sex-positive but never vulgar. The kind of brand a girl would proudly show her friends, not hide in a drawer.
-```
-
----
-
-## 一、策略分类体系
-
-### 三层模型
-
-```
-目标层（Goal）
-├── G1: 网站引流 — 评论提及 pinkpunch.com → 不需要回复
-├── G2: IG关注引导 — 评论提及 @pinkpunch.official → 不需要回复
-└── G3: 品牌种草 — 评论仅提 PinkPunch 品牌名 → 回复补链接或IG号
-
-搜索场景（Scene）
-├── S1: 竞品截流（@competitor 账号页）
-├── S2: 产品标签（#vibrator #sextoy 等）
-├── S3: 场景标签（#longdistancerelationship #selfcare 等）
-└── S4: 关键词搜索（vibrator review 等长尾词）
-
-互动风格（Style）
-├── T1: 体验分享（"I tried X and..."）
-├── T3: 场景代入（"My LDR boyfriend and I..."）
-└── T4: 专业推荐（"As someone who's tested 10+..."）
-```
-
-### 回复规则
-
-| 目标 | 评论已包含 | 回复 | 原因 |
-|------|-----------|------|------|
-| G1 | pinkpunch.com | 不回复 | 链接已在评论中 |
-| G2 | @pinkpunch.official | 不回复 | IG号已在评论中 |
-| G3 (6个) | PinkPunch 品牌名 | 回复补 pinkpunch.com | 评论种草 + 回复转化 |
-| G3 (6个) | PinkPunch 品牌名 | 回复补 @pinkpunch.official | 评论种草 + 回复引关注 |
-
----
-
-## 二、竞品与搜索词库（全策略共用）
-
-### 竞品账号池（S1 共用，25 个）
-
-| # | 账号 | 品牌 | 定位 | 截流价值 |
-|---|------|------|------|----------|
-| 1 | @leloofficial | LELO | 高端奢华 | 极高 — 用户重合度高 |
-| 2 | @satisfyer | Satisfyer | 中端走量 | 极高 — 市场份额大 |
-| 3 | @lovaboratory | Lovense | APP远程控制 | 极高 — 直接竞品 |
-| 4 | @womanizer_official | Womanizer | 吸吮技术 | 高 — 品类竞品 |
-| 5 | @dameproducts | Dame Products | DTC女性品牌 | 高 — 模式相同 |
-| 6 | @wevibe | We-Vibe | 情侣远程 | 高 — 场景竞品 |
-| 7 | @mysteryvibeofficial | MysteryVibe | 智能情趣 | 中 — 科技定位 |
-| 8 | @unboundbabes | Unbound | 新锐DTC | 中 — 同类新品牌 |
-| 9 | @getmaude | Maude | 极简设计 | 中 — 设计审美竞品 |
-| 10 | @smilemakers_collection | Smile Makers | 女性友好 | 中 — 品牌调性相似 |
-| 11 | @funfactoryofficial | Fun Factory | 德国制造 | 中 — 品质竞品 |
-| 12 | @je_joue | Je Joue | 英国高端 | 中 — 设计竞品 |
-| 13 | @caboratory | CalExotics | 大众市场 | 中 — 走量型 |
-| 14 | @tracysdog_official | Tracy's Dog | 中国出海 | 高 — 直接竞品 |
-| 15 | @svakom_official | SVAKOM | 中国出海 | 高 — 直接竞品 |
-| 16 | @laboratory_of_love | Lora DiCarlo | 科技创新 | 中 — 科技定位 |
-| 17 | @bellesaco | Bellesa | 女性平台 | 中 — 内容+产品 |
-| 18 | @biaboratory | Biird | 北欧设计 | 中 — 设计竞品 |
-| 19 | @roselif_official | Roselif | 玫瑰吸吮 | 高 — 爆款竞品 |
-| 20 | @inya_brand | INYA | 平价入门 | 低 — 入门竞品 |
-| 21 | @pillowtalkofficial | Pillow Talk | 少女风 | 中 — 外观竞品 |
-| 22 | @adameveofficial | Adam & Eve | 综合平台 | 低 — 渠道型 |
-| 23 | @lovelifetoys | Lovelife by OhMiBod | APP控制 | 高 — 功能竞品 |
-| 24 | @bloomiofficial | Bloomi | 女性健康 | 中 — 品类相关 |
-| 25 | @veildofficial | Veild | 隐蔽设计 | 中 — 设计差异化 |
-
-### 产品标签池（S2 共用）
-
-```json
-["#vibrator", "#sextoy", "#sextoyreview", "#vibratorreview", "#adultstore", "#intimatewellness", "#sexualwellness", "#sextoys", "#adulttoys", "#pleasureproducts"]
-```
-
-### 场景标签池（S3 共用）
-
-```json
-["#longdistancerelationship", "#couplegoals", "#ldr", "#selfcare", "#selfpleasure", "#womenwellness", "#giftforher", "#valentinesday", "#selfcaresunday", "#girlsnightout"]
-```
-
-### 关键词池（S4 共用）
-
-```json
-["vibrator review", "best vibrator 2026", "remote control vibrator", "app controlled vibrator", "cute vibrator", "quiet vibrator", "waterproof vibrator", "gift for her", "long distance relationship gift", "best sex toy for women"]
-```
-
----
-
-## 三、50 个策略完整定义
-
-### 策略总览
-
-#### A 区：G1 网站引流（12 策略，无回复）
-| ID | 目标 | 场景 | 风格 | 回复 | 间隔 | 日量 |
-|----|------|------|------|------|------|------|
-| A01 | G1 网站引流 | S1 竞品截流 | T1 体验分享 | 无 | 25-45s | 25 |
-| A02 | G1 网站引流 | S1 竞品截流 | T3 场景代入 | 无 | 25-45s | 25 |
-| A03 | G1 网站引流 | S1 竞品截流 | T4 专业推荐 | 无 | 25-45s | 25 |
-| A04 | G1 网站引流 | S2 产品标签 | T1 体验分享 | 无 | 25-45s | 25 |
-| A05 | G1 网站引流 | S2 产品标签 | T3 场景代入 | 无 | 25-45s | 25 |
-| A06 | G1 网站引流 | S2 产品标签 | T4 专业推荐 | 无 | 25-45s | 25 |
-| A07 | G1 网站引流 | S3 场景标签 | T1 体验分享 | 无 | 25-45s | 25 |
-| A08 | G1 网站引流 | S3 场景标签 | T3 场景代入 | 无 | 25-45s | 25 |
-| A09 | G1 网站引流 | S3 场景标签 | T4 专业推荐 | 无 | 25-45s | 25 |
-| A10 | G1 网站引流 | S4 关键词 | T1 体验分享 | 无 | 25-45s | 25 |
-| A11 | G1 网站引流 | S4 关键词 | T3 场景代入 | 无 | 25-45s | 25 |
-| A12 | G1 网站引流 | S4 关键词 | T4 专业推荐 | 无 | 25-45s | 25 |
-
-#### B 区：G2 IG关注引导（12 策略，无回复）
-
-| ID | 目标 | 场景 | 风格 | 回复 | 间隔 | 日量 |
-|----|------|------|------|------|------|------|
-| B01 | G2 IG关注 | S1 竞品截流 | T1 体验分享 | 无 | 25-45s | 25 |
-| B02 | G2 IG关注 | S1 竞品截流 | T3 场景代入 | 无 | 25-45s | 25 |
-| B03 | G2 IG关注 | S1 竞品截流 | T4 专业推荐 | 无 | 25-45s | 25 |
-| B04 | G2 IG关注 | S2 产品标签 | T1 体验分享 | 无 | 25-45s | 25 |
-| B05 | G2 IG关注 | S2 产品标签 | T3 场景代入 | 无 | 25-45s | 25 |
-| B06 | G2 IG关注 | S2 产品标签 | T4 专业推荐 | 无 | 25-45s | 25 |
-| B07 | G2 IG关注 | S3 场景标签 | T1 体验分享 | 无 | 25-45s | 25 |
-| B08 | G2 IG关注 | S3 场景标签 | T3 场景代入 | 无 | 25-45s | 25 |
-| B09 | G2 IG关注 | S3 场景标签 | T4 专业推荐 | 无 | 25-45s | 25 |
-| B10 | G2 IG关注 | S4 关键词 | T1 体验分享 | 无 | 25-45s | 25 |
-| B11 | G2 IG关注 | S4 关键词 | T3 场景代入 | 无 | 25-45s | 25 |
-| B12 | G2 IG关注 | S4 关键词 | T4 专业推荐 | 无 | 25-45s | 25 |
-
-#### C 区：G3 品牌种草（12 策略，回复补转化信息）
-
-| ID | 目标 | 场景 | 风格 | 回复补什么 | 间隔 | 日量 |
-|----|------|------|------|-----------|------|------|
-| C01 | G3 种草 | S1 竞品截流 | T1 体验分享 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C02 | G3 种草 | S1 竞品截流 | T3 场景代入 | 回复补 @pinkpunch.official | 30-50s | 20 |
-| C03 | G3 种草 | S1 竞品截流 | T4 专业推荐 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C04 | G3 种草 | S2 产品标签 | T1 体验分享 | 回复补 @pinkpunch.official | 30-50s | 20 |
-| C05 | G3 种草 | S2 产品标签 | T3 场景代入 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C06 | G3 种草 | S2 产品标签 | T4 专业推荐 | 回复补 @pinkpunch.official | 30-50s | 20 |
-| C07 | G3 种草 | S3 场景标签 | T1 体验分享 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C08 | G3 种草 | S3 场景标签 | T3 场景代入 | 回复补 @pinkpunch.official | 30-50s | 20 |
-| C09 | G3 种草 | S3 场景标签 | T4 专业推荐 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C10 | G3 种草 | S4 关键词 | T1 体验分享 | 回复补 @pinkpunch.official | 30-50s | 20 |
-| C11 | G3 种草 | S4 关键词 | T3 场景代入 | 回复补 pinkpunch.com | 30-50s | 20 |
-| C12 | G3 种草 | S4 关键词 | T4 专业推荐 | 回复补 @pinkpunch.official | 30-50s | 20 |
-
-#### D 区：对照组（4 策略）
-
-| ID | 类型 | 说明 | 间隔 | 日量 |
-|----|------|------|------|------|
-| D01 | 固定评论 × 网站引流 | AI 对照组，测 AI vs 固定 | 25-45s | 25 |
-| D02 | 固定评论 × IG关注 | AI 对照组，测 AI vs 固定 | 25-45s | 25 |
-| D03 | 压力测试（牺牲号） | 高频探底，预期被限制 | 8-15s | 100 |
-| D04 | 极保守对照 | 最低频率长期安全性 | 60-120s | 10 |
-
-#### E 区：重复验证（10 策略，复制高价值策略）
-
-| ID | 复制自 | 说明 |
-|----|--------|------|
-| E01 | A01 | G1×S1×T1 重复验证 |
-| E02 | A08 | G1×S3×T3 重复验证 |
-| E03 | B01 | G2×S1×T1 重复验证 |
-| E04 | B08 | G2×S3×T3 重复验证 |
-| E05 | C01 | G3×S1×T1 回复补链接 重复验证 |
-| E06 | C02 | G3×S1×T3 回复补IG 重复验证 |
-| E07 | A04 | G1×S2×T1 重复验证 |
-| E08 | B04 | G2×S2×T1 重复验证 |
-| E09 | C05 | G3×S2×T3 回复补链接 重复验证 |
-| E10 | D03 | 压力测试 重复验证（第二个牺牲号） |
-
-> E 区选择逻辑：优先覆盖 S1 竞品截流和 S3 场景标签（最可能产生差异的场景），每个目标至少 2 个重复验证，压力测试加一个号确认风控边界一致性。
-
----
-
-**总计：50 个策略 = 50 个账号**
-
-| 区 | 数量 | 占比 |
-|----|------|------|
-| A 区 G1 网站引流 | 12 | 24% |
-| B 区 G2 IG关注 | 12 | 24% |
-| C 区 G3 品牌种草 | 12 | 24% |
-| D 区 对照组 | 4 | 8% |
-| E 区 重复验证 | 10 | 20% |
-
----
-
-## 四、每个策略的完整配置
-
-> 每个策略包含：AI Prompt、搜索词、API JSON、养号配置
-> 所有 Prompt 均为英文输出，针对策略目标和风格定制
-
----
-
 ### A01 | G1 网站引流 × S1 竞品截流 × T1 体验分享
 
 **AI 评论 Prompt：**
@@ -438,7 +60,6 @@ CRITICAL RULES:
 
 ---
 
-### A02 | G1 网站引流 × S1 竞品截流 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -499,6 +120,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### A03 | G1 网站引流 × S1 竞品截流 × T4 专业推荐
 
@@ -561,7 +183,6 @@ CRITICAL RULES:
 ```
 
 ---
-### A04 | G1 网站引流 × S2 产品标签 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -607,6 +228,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### A05 | G1 网站引流 × S2 产品标签 × T3 场景代入
 
@@ -655,7 +277,6 @@ CRITICAL RULES:
 
 ---
 
-### A06 | G1 网站引流 × S2 产品标签 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -701,6 +322,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### A07 | G1 网站引流 × S3 场景标签 × T1 体验分享
 
@@ -749,7 +371,6 @@ CRITICAL RULES:
 
 ---
 
-### A08 | G1 网站引流 × S3 场景标签 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -795,6 +416,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### A09 | G1 网站引流 × S3 场景标签 × T4 专业推荐
 
@@ -843,7 +465,6 @@ CRITICAL RULES:
 
 ---
 
-### A10 | G1 网站引流 × S4 关键词 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -889,6 +510,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### A11 | G1 网站引流 × S4 关键词 × T3 场景代入
 
@@ -938,7 +560,6 @@ CRITICAL RULES:
 
 ---
 
-### A12 | G1 网站引流 × S4 关键词 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -984,6 +605,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 ### B01 | G2 IG关注 × S1 竞品截流 × T1 体验分享
 
 **AI 评论 Prompt：**
@@ -1031,7 +653,6 @@ CRITICAL RULES:
 
 ---
 
-### B02 | G2 IG关注 × S1 竞品截流 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -1077,6 +698,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### B03 | G2 IG关注 × S1 竞品截流 × T4 专业推荐
 
@@ -1125,7 +747,6 @@ CRITICAL RULES:
 
 ---
 
-### B04 | G2 IG关注 × S2 产品标签 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -1171,6 +792,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### B05 | G2 IG关注 × S2 产品标签 × T3 场景代入
 
@@ -1219,7 +841,6 @@ CRITICAL RULES:
 
 ---
 
-### B06 | G2 IG关注 × S2 产品标签 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -1265,6 +886,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### B07 | G2 IG关注 × S3 场景标签 × T1 体验分享
 
@@ -1313,7 +935,6 @@ CRITICAL RULES:
 
 ---
 
-### B08 | G2 IG关注 × S3 场景标签 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -1359,6 +980,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### B09 | G2 IG关注 × S3 场景标签 × T4 专业推荐
 
@@ -1407,7 +1029,6 @@ CRITICAL RULES:
 
 ---
 
-### B10 | G2 IG关注 × S4 关键词 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -1453,6 +1074,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### B11 | G2 IG关注 × S4 关键词 × T3 场景代入
 
@@ -1501,7 +1123,6 @@ CRITICAL RULES:
 
 ---
 
-### B12 | G2 IG关注 × S4 关键词 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -1554,6 +1175,7 @@ CRITICAL RULES:
 > 全部使用 enableReply:true, replyMode:"ai-ai"
 
 ---
+
 
 ### C01 | G3 品牌种草 × S1 竞品截流 × T1 体验分享
 
@@ -1619,7 +1241,6 @@ Rules:
 
 ---
 
-### C02 | G3 品牌种草 × S1 竞品截流 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -1682,6 +1303,7 @@ Rules:
 ```
 
 ---
+
 
 ### C03 | G3 品牌种草 × S1 竞品截流 × T4 专业推荐
 
@@ -1746,7 +1368,6 @@ Rules:
 
 ---
 
-### C04 | G3 品牌种草 × S2 产品标签 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -1809,6 +1430,7 @@ Rules:
 ```
 
 ---
+
 
 ### C05 | G3 品牌种草 × S2 产品标签 × T3 场景代入
 
@@ -1873,7 +1495,6 @@ Rules:
 
 ---
 
-### C06 | G3 品牌种草 × S2 产品标签 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -1935,6 +1556,7 @@ Rules:
 ```
 
 ---
+
 
 ### C07 | G3 品牌种草 × S3 场景标签 × T1 体验分享
 
@@ -1998,7 +1620,6 @@ Rules:
 
 ---
 
-### C08 | G3 品牌种草 × S3 场景标签 × T3 场景代入
 
 **AI 评论 Prompt：**
 ```
@@ -2059,6 +1680,7 @@ Rules:
 ```
 
 ---
+
 
 ### C09 | G3 品牌种草 × S3 场景标签 × T4 专业推荐
 
@@ -2122,7 +1744,6 @@ Rules:
 
 ---
 
-### C10 | G3 品牌种草 × S4 关键词 × T1 体验分享
 
 **AI 评论 Prompt：**
 ```
@@ -2183,6 +1804,7 @@ Rules:
 ```
 
 ---
+
 
 ### C11 | G3 品牌种草 × S4 关键词 × T3 场景代入
 
@@ -2246,7 +1868,6 @@ Rules:
 
 ---
 
-### C12 | G3 品牌种草 × S4 关键词 × T4 专业推荐
 
 **AI 评论 Prompt：**
 ```
@@ -2315,6 +1936,7 @@ Rules:
 
 ---
 
+
 ### D01 | 固定评论 × 网站引流（AI 对照组）
 
 **固定评论库（10 条轮换）：**
@@ -2363,7 +1985,6 @@ Rules:
 
 ---
 
-### D02 | 固定评论 × IG关注引导（AI 对照组）
 
 **固定评论库（10 条轮换）：**
 ```json
@@ -2410,6 +2031,7 @@ Rules:
 ```
 
 ---
+
 
 ### D03 | 压力测试（牺牲号）
 
@@ -2464,7 +2086,6 @@ CRITICAL RULES:
 
 ---
 
-### D04 | 极保守对照
 
 > 目的：验证最低频率下的长期安全性。60-120 秒间隔，日量仅 10 条。
 > 预期：永远不被限制，作为安全基线。
@@ -2521,6 +2142,7 @@ CRITICAL RULES:
 
 ---
 
+
 ### E01 | 复制 A01（G1×S1×T1 重复验证）
 
 > 完全复制 A01 配置，仅账号不同
@@ -2547,7 +2169,6 @@ CRITICAL RULES:
 
 ---
 
-### E02 | 复制 A08（G1×S3×T3 重复验证）
 
 ```json
 {
@@ -2570,6 +2191,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### E03 | 复制 B01（G2×S1×T1 重复验证）
 
@@ -2595,7 +2217,6 @@ CRITICAL RULES:
 
 ---
 
-### E04 | 复制 B08（G2×S3×T3 重复验证）
 
 ```json
 {
@@ -2618,6 +2239,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### E05 | 复制 C01（G3×S1×T1 回复补链接 重复验证）
 
@@ -2646,7 +2268,6 @@ CRITICAL RULES:
 
 ---
 
-### E06 | 复制 C02（G3×S1×T3 回复补IG 重复验证）
 
 ```json
 {
@@ -2673,6 +2294,7 @@ CRITICAL RULES:
 
 ---
 
+
 ### E07 | 复制 A04（G1×S2×T1 重复验证）
 
 ```json
@@ -2697,7 +2319,6 @@ CRITICAL RULES:
 
 ---
 
-### E08 | 复制 B04（G2×S2×T1 重复验证）
 
 ```json
 {
@@ -2720,6 +2341,7 @@ CRITICAL RULES:
 ```
 
 ---
+
 
 ### E09 | 复制 C05（G3×S2×T3 回复补链接 重复验证）
 
@@ -2748,7 +2370,6 @@ CRITICAL RULES:
 
 ---
 
-### E10 | 复制 D03（压力测试 重复验证 — 第二个牺牲号）
 
 ```json
 {
